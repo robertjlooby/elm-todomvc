@@ -1,6 +1,4 @@
-# TodoMVC in Elm - [Try It!](http://evancz.github.io/elm-todomvc)
-
-[![Deploy](https://www.herokucdn.com/deploy/button.png)](https://heroku.com/deploy)
+# TodoMVC in Elm - [Try It!](http://robertjlooby.github.io/elm-todomvc)
 
 ## Project Structure
 
