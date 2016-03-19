@@ -17,6 +17,7 @@ for notes on structuring more complex GUIs with Elm:
 https://github.com/evancz/elm-architecture-tutorial/
 -}
 
+import Effects exposing (Effects)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
@@ -25,6 +26,7 @@ import Http
 import Json.Decode.Extra exposing ((|:))
 import Json.Decode exposing ((:=))
 import Signal exposing (Signal, Address)
+import StartApp
 import String
 import Task exposing (andThen)
 import Window
@@ -93,25 +95,27 @@ type Action
 -- How we update our Model on a given Action?
 
 
-update : Action -> Model -> Model
+update : Action -> Model -> ( Model, Effects Action )
 update action model =
   case action of
     NoOp ->
-      model
+      ( model, Effects.none )
 
     Add ->
-      { model
-        | order = model.order + 1
-        , field = ""
-        , todos =
-            if String.isEmpty model.field then
-              model.todos
-            else
-              model.todos ++ [ newTodo model.field model.order ]
-      }
+      ( { model
+          | order = model.order + 1
+          , field = ""
+          , todos =
+              if String.isEmpty model.field then
+                model.todos
+              else
+                model.todos ++ [ newTodo model.field model.order ]
+        }
+      , Effects.none
+      )
 
     UpdateField str ->
-      { model | field = str }
+      ( { model | field = str }, Effects.none )
 
     EditingTodo id isEditing ->
       let
@@ -120,8 +124,16 @@ update action model =
             { t | editing = isEditing }
           else
             t
+
+        effect =
+          if isEditing then
+            Signal.send focusIdMailbox.address id
+              |> Task.map (always NoOp)
+              |> Effects.task
+          else
+            Effects.none
       in
-        { model | todos = List.map updateTodo model.todos }
+        ( { model | todos = List.map updateTodo model.todos }, effect )
 
     UpdateTodo id task ->
       let
@@ -131,13 +143,13 @@ update action model =
           else
             t
       in
-        { model | todos = List.map updateTodo model.todos }
+        ( { model | todos = List.map updateTodo model.todos }, Effects.none )
 
     Delete id ->
-      { model | todos = List.filter (\t -> t.id /= id) model.todos }
+      ( { model | todos = List.filter (\t -> t.id /= id) model.todos }, Effects.none )
 
     DeleteComplete ->
-      { model | todos = List.filter (not << .completed) model.todos }
+      ( { model | todos = List.filter (not << .completed) model.todos }, Effects.none )
 
     Check id isCompleted ->
       let
@@ -147,20 +159,20 @@ update action model =
           else
             t
       in
-        { model | todos = List.map updateTodo model.todos }
+        ( { model | todos = List.map updateTodo model.todos }, Effects.none )
 
     CheckAll isCompleted ->
       let
         updateTodo t =
           { t | completed = isCompleted }
       in
-        { model | todos = List.map updateTodo model.todos }
+        ( { model | todos = List.map updateTodo model.todos }, Effects.none )
 
     ChangeVisibility visibility ->
-      { model | visibility = visibility }
+      ( { model | visibility = visibility }, Effects.none )
 
     InitializeState todos ->
-      { model | todos = todos }
+      ( { model | todos = todos }, Effects.none )
 
 
 
@@ -368,22 +380,23 @@ infoFooter =
 -- wire the entire application together
 
 
+app =
+  StartApp.start
+    { init = ( emptyModel, Effects.none )
+    , view = view
+    , update = update
+    , inputs = [ actions.signal ]
+    }
+
+
 main : Signal Html
 main =
-  Signal.map (view actions.address) model
+  app.html
 
 
-
--- manage the model of our application over time
-
-
-model : Signal Model
-model =
-  Signal.foldp update emptyModel actions.signal
-
-
-
--- actions from user input
+port tasks : Signal (Task.Task Effects.Never ())
+port tasks =
+  app.tasks
 
 
 actions : Signal.Mailbox Action
@@ -391,27 +404,18 @@ actions =
   Signal.mailbox NoOp
 
 
+focusIdMailbox : Signal.Mailbox Int
+focusIdMailbox =
+  Signal.mailbox 0
+
+
 port focus : Signal String
 port focus =
   let
-    needsFocus act =
-      case act of
-        EditingTodo id bool ->
-          bool
-
-        _ ->
-          False
-
-    toSelector act =
-      case act of
-        EditingTodo id _ ->
-          "#todo-" ++ toString id
-
-        _ ->
-          ""
+    toSelector id =
+      "#todo-" ++ toString id
   in
-    actions.signal
-      |> Signal.filter needsFocus (EditingTodo 0 True)
+    focusIdMailbox.signal
       |> Signal.map toSelector
 
 
