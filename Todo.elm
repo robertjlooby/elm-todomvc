@@ -415,15 +415,6 @@ port focus =
       |> Signal.map toSelector
 
 
-
--- interactions with localStorage to save the model
-
-
-port setStorage : Signal Model
-port setStorage =
-  model
-
-
 port loadInitialState : Task.Task Http.Error ()
 port loadInitialState =
   Http.get todosDecoder "http://serviceworker-todo.herokuapp.com/todos"

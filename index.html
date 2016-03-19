@@ -21,9 +21,6 @@ todomvc.ports.focus.subscribe(function(selector) {
         }
     }, 50);
 });
-todomvc.ports.setStorage.subscribe(function(state) {
-    localStorage.setItem('elm-todo-state', JSON.stringify(state));
-});
 </script>
 
 </html>
