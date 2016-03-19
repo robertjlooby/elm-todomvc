@@ -21,9 +21,12 @@ import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Html.Lazy exposing (lazy, lazy2, lazy3)
-import Json.Decode as Json
+import Http
+import Json.Decode.Extra exposing ((|:))
+import Json.Decode exposing ((:=))
 import Signal exposing (Signal, Address)
 import String
+import Task exposing (andThen)
 import Window
 
 
@@ -32,14 +35,14 @@ import Window
 
 
 type alias Model =
-  { tasks : List Task
+  { tasks : List Todo
   , field : String
-  , uid : Int
+  , order : Int
   , visibility : String
   }
 
 
-type alias Task =
+type alias Todo =
   { description : String
   , completed : Bool
   , editing : Bool
@@ -47,8 +50,8 @@ type alias Task =
   }
 
 
-newTask : String -> Int -> Task
-newTask desc id =
+newTodo : String -> Int -> Todo
+newTodo desc id =
   { description = desc
   , completed = False
   , editing = False
@@ -61,7 +64,7 @@ emptyModel =
   { tasks = []
   , visibility = "All"
   , field = ""
-  , uid = 0
+  , order = 0
   }
 
 
@@ -75,14 +78,15 @@ emptyModel =
 type Action
   = NoOp
   | UpdateField String
-  | EditingTask Int Bool
-  | UpdateTask Int String
+  | EditingTodo Int Bool
+  | UpdateTodo Int String
   | Add
   | Delete Int
   | DeleteComplete
   | Check Int Bool
   | CheckAll Bool
   | ChangeVisibility String
+  | InitializeState (List Todo)
 
 
 
@@ -97,37 +101,37 @@ update action model =
 
     Add ->
       { model
-        | uid = model.uid + 1
+        | order = model.order + 1
         , field = ""
         , tasks =
             if String.isEmpty model.field then
               model.tasks
             else
-              model.tasks ++ [ newTask model.field model.uid ]
+              model.tasks ++ [ newTodo model.field model.order ]
       }
 
     UpdateField str ->
       { model | field = str }
 
-    EditingTask id isEditing ->
+    EditingTodo id isEditing ->
       let
-        updateTask t =
+        updateTodo t =
           if t.id == id then
             { t | editing = isEditing }
           else
             t
       in
-        { model | tasks = List.map updateTask model.tasks }
+        { model | tasks = List.map updateTodo model.tasks }
 
-    UpdateTask id task ->
+    UpdateTodo id task ->
       let
-        updateTask t =
+        updateTodo t =
           if t.id == id then
             { t | description = task }
           else
             t
       in
-        { model | tasks = List.map updateTask model.tasks }
+        { model | tasks = List.map updateTodo model.tasks }
 
     Delete id ->
       { model | tasks = List.filter (\t -> t.id /= id) model.tasks }
@@ -137,23 +141,26 @@ update action model =
 
     Check id isCompleted ->
       let
-        updateTask t =
+        updateTodo t =
           if t.id == id then
             { t | completed = isCompleted }
           else
             t
       in
-        { model | tasks = List.map updateTask model.tasks }
+        { model | tasks = List.map updateTodo model.tasks }
 
     CheckAll isCompleted ->
       let
-        updateTask t =
+        updateTodo t =
           { t | completed = isCompleted }
       in
-        { model | tasks = List.map updateTask model.tasks }
+        { model | tasks = List.map updateTodo model.tasks }
 
     ChangeVisibility visibility ->
       { model | visibility = visibility }
+
+    InitializeState todos ->
+      { model | tasks = todos }
 
 
 
@@ -180,7 +187,7 @@ onEnter : Address a -> a -> Attribute
 onEnter address value =
   on
     "keydown"
-    (Json.customDecoder keyCode is13)
+    (Json.Decode.customDecoder keyCode is13)
     (\_ -> Signal.message address value)
 
 
@@ -210,7 +217,7 @@ taskEntry address task =
     ]
 
 
-taskList : Address Action -> String -> List Task -> Html
+taskList : Address Action -> String -> List Todo -> Html
 taskList address visibility tasks =
   let
     isVisible todo =
@@ -254,7 +261,7 @@ taskList address visibility tasks =
       ]
 
 
-todoItem : Address Action -> Task -> Html
+todoItem : Address Action -> Todo -> Html
 todoItem address todo =
   li
     [ classList [ ( "completed", todo.completed ), ( "editing", todo.editing ) ] ]
@@ -268,7 +275,7 @@ todoItem address todo =
             ]
             []
         , label
-            [ onDoubleClick address (EditingTask todo.id True) ]
+            [ onDoubleClick address (EditingTodo todo.id True) ]
             [ text todo.description ]
         , button
             [ class "destroy"
@@ -281,15 +288,15 @@ todoItem address todo =
         , value todo.description
         , name "title"
         , id ("todo-" ++ toString todo.id)
-        , on "input" targetValue (Signal.message address << UpdateTask todo.id)
-        , onBlur address (EditingTask todo.id False)
-        , onEnter address (EditingTask todo.id False)
+        , on "input" targetValue (Signal.message address << UpdateTodo todo.id)
+        , onBlur address (EditingTodo todo.id False)
+        , onEnter address (EditingTodo todo.id False)
         ]
         []
     ]
 
 
-controls : Address Action -> String -> List Task -> Html
+controls : Address Action -> String -> List Todo -> Html
 controls address visibility tasks =
   let
     tasksCompleted =
@@ -372,12 +379,7 @@ main =
 
 model : Signal Model
 model =
-  Signal.foldp update initialModel actions.signal
-
-
-initialModel : Model
-initialModel =
-  Maybe.withDefault emptyModel getStorage
+  Signal.foldp update emptyModel actions.signal
 
 
 
@@ -394,7 +396,7 @@ port focus =
   let
     needsFocus act =
       case act of
-        EditingTask id bool ->
+        EditingTodo id bool ->
           bool
 
         _ ->
@@ -402,14 +404,14 @@ port focus =
 
     toSelector act =
       case act of
-        EditingTask id _ ->
+        EditingTodo id _ ->
           "#todo-" ++ toString id
 
         _ ->
           ""
   in
     actions.signal
-      |> Signal.filter needsFocus (EditingTask 0 True)
+      |> Signal.filter needsFocus (EditingTodo 0 True)
       |> Signal.map toSelector
 
 
@@ -417,7 +419,26 @@ port focus =
 -- interactions with localStorage to save the model
 
 
-port getStorage : Maybe Model
 port setStorage : Signal Model
 port setStorage =
   model
+
+
+port loadInitialState : Task.Task Http.Error ()
+port loadInitialState =
+  Http.get todosDecoder "http://serviceworker-todo.herokuapp.com/todos"
+    `andThen` (\todos -> Signal.send actions.address <| InitializeState todos)
+
+
+todoDecoder : Json.Decode.Decoder Todo
+todoDecoder =
+  Json.Decode.succeed Todo
+    |: ("title" := Json.Decode.string)
+    |: ("completed" := Json.Decode.bool)
+    |: Json.Decode.succeed False
+    |: ("order" := Json.Decode.int)
+
+
+todosDecoder : Json.Decode.Decoder (List Todo)
+todosDecoder =
+  Json.Decode.list todoDecoder
