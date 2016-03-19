@@ -35,7 +35,7 @@ import Window
 
 
 type alias Model =
-  { tasks : List Todo
+  { todos : List Todo
   , field : String
   , order : Int
   , visibility : String
@@ -61,7 +61,7 @@ newTodo desc id =
 
 emptyModel : Model
 emptyModel =
-  { tasks = []
+  { todos = []
   , visibility = "All"
   , field = ""
   , order = 0
@@ -103,11 +103,11 @@ update action model =
       { model
         | order = model.order + 1
         , field = ""
-        , tasks =
+        , todos =
             if String.isEmpty model.field then
-              model.tasks
+              model.todos
             else
-              model.tasks ++ [ newTodo model.field model.order ]
+              model.todos ++ [ newTodo model.field model.order ]
       }
 
     UpdateField str ->
@@ -121,7 +121,7 @@ update action model =
           else
             t
       in
-        { model | tasks = List.map updateTodo model.tasks }
+        { model | todos = List.map updateTodo model.todos }
 
     UpdateTodo id task ->
       let
@@ -131,13 +131,13 @@ update action model =
           else
             t
       in
-        { model | tasks = List.map updateTodo model.tasks }
+        { model | todos = List.map updateTodo model.todos }
 
     Delete id ->
-      { model | tasks = List.filter (\t -> t.id /= id) model.tasks }
+      { model | todos = List.filter (\t -> t.id /= id) model.todos }
 
     DeleteComplete ->
-      { model | tasks = List.filter (not << .completed) model.tasks }
+      { model | todos = List.filter (not << .completed) model.todos }
 
     Check id isCompleted ->
       let
@@ -147,20 +147,20 @@ update action model =
           else
             t
       in
-        { model | tasks = List.map updateTodo model.tasks }
+        { model | todos = List.map updateTodo model.todos }
 
     CheckAll isCompleted ->
       let
         updateTodo t =
           { t | completed = isCompleted }
       in
-        { model | tasks = List.map updateTodo model.tasks }
+        { model | todos = List.map updateTodo model.todos }
 
     ChangeVisibility visibility ->
       { model | visibility = visibility }
 
     InitializeState todos ->
-      { model | tasks = todos }
+      { model | todos = todos }
 
 
 
@@ -176,8 +176,8 @@ view address model =
     [ section
         [ id "todoapp" ]
         [ lazy2 taskEntry address model.field
-        , lazy3 taskList address model.visibility model.tasks
-        , lazy3 controls address model.visibility model.tasks
+        , lazy3 taskList address model.visibility model.todos
+        , lazy3 controls address model.visibility model.todos
         ]
     , infoFooter
     ]
@@ -218,7 +218,7 @@ taskEntry address task =
 
 
 taskList : Address Action -> String -> List Todo -> Html
-taskList address visibility tasks =
+taskList address visibility todos =
   let
     isVisible todo =
       case visibility of
@@ -232,10 +232,10 @@ taskList address visibility tasks =
           True
 
     allCompleted =
-      List.all .completed tasks
+      List.all .completed todos
 
     cssVisibility =
-      if List.isEmpty tasks then
+      if List.isEmpty todos then
         "hidden"
       else
         "visible"
@@ -257,7 +257,7 @@ taskList address visibility tasks =
           [ text "Mark all as complete" ]
       , ul
           [ id "todo-list" ]
-          (List.map (todoItem address) (List.filter isVisible tasks))
+          (List.map (todoItem address) (List.filter isVisible todos))
       ]
 
 
@@ -297,13 +297,13 @@ todoItem address todo =
 
 
 controls : Address Action -> String -> List Todo -> Html
-controls address visibility tasks =
+controls address visibility todos =
   let
     tasksCompleted =
-      List.length (List.filter .completed tasks)
+      List.length (List.filter .completed todos)
 
     tasksLeft =
-      List.length tasks - tasksCompleted
+      List.length todos - tasksCompleted
 
     item_ =
       if tasksLeft == 1 then
@@ -313,7 +313,7 @@ controls address visibility tasks =
   in
     footer
       [ id "footer"
-      , hidden (List.isEmpty tasks)
+      , hidden (List.isEmpty todos)
       ]
       [ span
           [ id "todo-count" ]
