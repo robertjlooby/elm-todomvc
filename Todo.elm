@@ -39,7 +39,6 @@ import Window
 type alias Model =
   { todos : List Todo
   , field : String
-  , order : Int
   , visibility : String
   }
 
@@ -48,16 +47,16 @@ type alias Todo =
   { description : String
   , completed : Bool
   , editing : Bool
-  , id : Int
+  , uid : String
   }
 
 
-newTodo : String -> Int -> Todo
-newTodo desc id =
+newTodo : String -> String -> Todo
+newTodo desc uid =
   { description = desc
   , completed = False
   , editing = False
-  , id = id
+  , uid = uid
   }
 
 
@@ -66,7 +65,6 @@ emptyModel =
   { todos = []
   , visibility = "All"
   , field = ""
-  , order = 0
   }
 
 
@@ -80,12 +78,13 @@ emptyModel =
 type Action
   = NoOp
   | UpdateField String
-  | EditingTodo Int Bool
-  | UpdateTodo Int String
+  | EditingTodo String Bool
+  | UpdateTodo String String
   | Add
-  | Delete Int
+  | NewTodo (Maybe Todo)
+  | Delete String
   | DeleteComplete
-  | Check Int Bool
+  | Check String Bool
   | CheckAll Bool
   | ChangeVisibility String
   | InitializeState (List Todo)
@@ -102,32 +101,40 @@ update action model =
       ( model, Effects.none )
 
     Add ->
-      ( { model
-          | order = model.order + 1
-          , field = ""
-          , todos =
-              if String.isEmpty model.field then
-                model.todos
-              else
-                model.todos ++ [ newTodo model.field model.order ]
-        }
-      , Effects.none
-      )
+      let
+        effect =
+          if String.isEmpty model.field then
+            Effects.none
+          else
+            Http.post todoDecoder url (Http.string <| "{\"title\":\"" ++ model.field ++ "\"}")
+              |> Task.toMaybe
+              |> Task.map NewTodo
+              |> Effects.task
+      in
+        ( { model | field = "" }, effect )
+
+    NewTodo todo ->
+      case todo of
+        Just t ->
+          ( { model | todos = model.todos ++ [ t ] }, Effects.none )
+
+        Nothing ->
+          ( model, Effects.none )
 
     UpdateField str ->
       ( { model | field = str }, Effects.none )
 
-    EditingTodo id isEditing ->
+    EditingTodo uid isEditing ->
       let
         updateTodo t =
-          if t.id == id then
+          if t.uid == uid then
             { t | editing = isEditing }
           else
             t
 
         effect =
           if isEditing then
-            Signal.send focusIdMailbox.address id
+            Signal.send focusIdMailbox.address uid
               |> Task.map (always NoOp)
               |> Effects.task
           else
@@ -135,26 +142,26 @@ update action model =
       in
         ( { model | todos = List.map updateTodo model.todos }, effect )
 
-    UpdateTodo id task ->
+    UpdateTodo uid task ->
       let
         updateTodo t =
-          if t.id == id then
+          if t.uid == uid then
             { t | description = task }
           else
             t
       in
         ( { model | todos = List.map updateTodo model.todos }, Effects.none )
 
-    Delete id ->
-      ( { model | todos = List.filter (\t -> t.id /= id) model.todos }, Effects.none )
+    Delete uid ->
+      ( { model | todos = List.filter (\t -> t.uid /= uid) model.todos }, Effects.none )
 
     DeleteComplete ->
       ( { model | todos = List.filter (not << .completed) model.todos }, Effects.none )
 
-    Check id isCompleted ->
+    Check uid isCompleted ->
       let
         updateTodo t =
-          if t.id == id then
+          if t.uid == uid then
             { t | completed = isCompleted }
           else
             t
@@ -283,15 +290,15 @@ todoItem address todo =
             [ class "toggle"
             , type' "checkbox"
             , checked todo.completed
-            , onClick address (Check todo.id (not todo.completed))
+            , onClick address (Check todo.uid (not todo.completed))
             ]
             []
         , label
-            [ onDoubleClick address (EditingTodo todo.id True) ]
+            [ onDoubleClick address (EditingTodo todo.uid True) ]
             [ text todo.description ]
         , button
             [ class "destroy"
-            , onClick address (Delete todo.id)
+            , onClick address (Delete todo.uid)
             ]
             []
         ]
@@ -299,10 +306,10 @@ todoItem address todo =
         [ class "edit"
         , value todo.description
         , name "title"
-        , id ("todo-" ++ toString todo.id)
-        , on "input" targetValue (Signal.message address << UpdateTodo todo.id)
-        , onBlur address (EditingTodo todo.id False)
-        , onEnter address (EditingTodo todo.id False)
+        , id ("todo-" ++ toString todo.uid)
+        , on "input" targetValue (Signal.message address << UpdateTodo todo.uid)
+        , onBlur address (EditingTodo todo.uid False)
+        , onEnter address (EditingTodo todo.uid False)
         ]
         []
     ]
@@ -404,24 +411,29 @@ actions =
   Signal.mailbox NoOp
 
 
-focusIdMailbox : Signal.Mailbox Int
+focusIdMailbox : Signal.Mailbox String
 focusIdMailbox =
-  Signal.mailbox 0
+  Signal.mailbox ""
 
 
 port focus : Signal String
 port focus =
   let
-    toSelector id =
-      "#todo-" ++ toString id
+    toSelector uid =
+      "#todo-" ++ uid
   in
     focusIdMailbox.signal
       |> Signal.map toSelector
 
 
+url : String
+url =
+  "http://serviceworker-todo.herokuapp.com/todos"
+
+
 port loadInitialState : Task.Task Http.Error ()
 port loadInitialState =
-  Http.get todosDecoder "http://serviceworker-todo.herokuapp.com/todos"
+  Http.get todosDecoder url
     `andThen` (\todos -> Signal.send actions.address <| InitializeState todos)
 
 
@@ -431,7 +443,7 @@ todoDecoder =
     |: ("title" := Json.Decode.string)
     |: ("completed" := Json.Decode.bool)
     |: Json.Decode.succeed False
-    |: ("order" := Json.Decode.int)
+    |: ("uid" := Json.Decode.string)
 
 
 todosDecoder : Json.Decode.Decoder (List Todo)
