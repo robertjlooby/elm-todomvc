@@ -386,7 +386,7 @@ todoItem address todo =
         [ class "edit"
         , value todo.description
         , name "title"
-        , id ("todo-" ++ toString todo.uid)
+        , id ("todo-" ++ todo.uid)
         , on "blur" targetValue (Signal.message address << UpdateTodo todo.uid)
         , on
             "keydown"
