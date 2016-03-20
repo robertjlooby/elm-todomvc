@@ -80,6 +80,7 @@ type Action
   | UpdateField String
   | EditingTodo String Bool
   | UpdateTodo String String
+  | HandleUpdatedTodo (Maybe Todo)
   | Add
   | HandleNew (Maybe Todo)
   | Delete String
@@ -143,15 +144,37 @@ update action model =
       in
         ( { model | todos = List.map updateTodo model.todos }, effect )
 
-    UpdateTodo uid description ->
+    UpdateTodo uid newDescription ->
       let
-        updateTodo t =
-          if t.uid == uid then
-            { t | description = description }
-          else
-            t
+        effect =
+          Http.send
+            Http.defaultSettings
+            { verb = "PATCH"
+            , headers = []
+            , url = url ++ "/" ++ uid
+            , body = Http.string <| "{\"title\":\"" ++ newDescription ++ "\"}"
+            }
+            |> Http.fromJson todoDecoder
+            |> Task.toMaybe
+            |> Task.map HandleUpdatedTodo
+            |> Effects.task
       in
-        ( { model | todos = List.map updateTodo model.todos }, Effects.none )
+        ( model, effect )
+
+    HandleUpdatedTodo maybeTodo ->
+      case maybeTodo of
+        Just todo ->
+          let
+            updateTodo t =
+              if t.uid == todo.uid then
+                todo
+              else
+                t
+          in
+            ( { model | todos = List.map updateTodo model.todos }, Effects.none )
+
+        Nothing ->
+          ( model, Effects.none )
 
     Delete uid ->
       let
