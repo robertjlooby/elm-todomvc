@@ -18,3 +18,10 @@ elm-make Todo.elm --output elm.js
 ```
 
 Then open `index.html` in your browser!
+
+This has been modified from the
+[original version](https://github.com/evancz/elm-todomvc)
+which stored the tasks in local storage to make HTTP requests to any backend
+conforming to the [Todo-Backend](http://www.todobackend.com/index.html)
+spec. Just the `url` needs to updated to change which backend it is pointing
+at.
