@@ -220,13 +220,20 @@ update action model =
 
     Check uid isCompleted ->
       let
-        updateTodo t =
-          if t.uid == uid then
-            { t | completed = isCompleted }
-          else
-            t
+        effect =
+          Http.send
+            Http.defaultSettings
+            { verb = "PATCH"
+            , headers = []
+            , url = url ++ "/" ++ uid
+            , body = Http.string <| "{\"completed\":" ++ (toString >> String.toLower) isCompleted ++ "}"
+            }
+            |> Http.fromJson todoDecoder
+            |> Task.toMaybe
+            |> Task.map HandleUpdatedTodo
+            |> Effects.task
       in
-        ( { model | todos = List.map updateTodo model.todos }, Effects.none )
+        ( model, effect )
 
     ChangeVisibility visibility ->
       ( { model | visibility = visibility }, Effects.none )
@@ -347,7 +354,11 @@ todoItem address todo =
             [ class "toggle"
             , type' "checkbox"
             , checked todo.completed
-            , onClick address (Check todo.uid (not todo.completed))
+            , onWithOptions
+                "click"
+                { stopPropagation = True, preventDefault = True }
+                Json.Decode.value
+                (\_ -> Signal.message address (Check todo.uid (not todo.completed)))
             ]
             []
         , label
