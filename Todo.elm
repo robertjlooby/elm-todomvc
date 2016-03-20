@@ -142,11 +142,11 @@ update action model =
       in
         ( { model | todos = List.map updateTodo model.todos }, effect )
 
-    UpdateTodo uid task ->
+    UpdateTodo uid description ->
       let
         updateTodo t =
           if t.uid == uid then
-            { t | description = task }
+            { t | description = description }
           else
             t
       in
