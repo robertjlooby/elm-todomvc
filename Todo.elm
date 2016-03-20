@@ -78,7 +78,7 @@ emptyModel =
 type Action
   = NoOp
   | UpdateField String
-  | EditingTodo String Bool
+  | BeginEditingTodo String
   | UpdateTodo String String
   | HandleUpdatedTodo (Maybe Todo)
   | Add
@@ -126,40 +126,51 @@ update action model =
     UpdateField str ->
       ( { model | field = str }, Effects.none )
 
-    EditingTodo uid isEditing ->
+    BeginEditingTodo uid ->
       let
         updateTodo t =
           if t.uid == uid then
-            { t | editing = isEditing }
+            { t | editing = True }
           else
             t
 
         effect =
-          if isEditing then
-            Signal.send focusIdMailbox.address uid
-              |> Task.map (always NoOp)
-              |> Effects.task
-          else
-            Effects.none
+          Signal.send focusIdMailbox.address uid
+            |> Task.map (always NoOp)
+            |> Effects.task
       in
         ( { model | todos = List.map updateTodo model.todos }, effect )
 
     UpdateTodo uid newDescription ->
-      let
-        effect =
-          Http.send
-            Http.defaultSettings
-            { verb = "PATCH"
-            , headers = []
-            , url = url ++ "/" ++ uid
-            , body = Http.string <| "{\"title\":\"" ++ newDescription ++ "\"}"
-            }
-            |> Http.fromJson todoDecoder
-            |> Task.toMaybe
-            |> Task.map HandleUpdatedTodo
-            |> Effects.task
-      in
-        ( model, effect )
+      case List.filter (\t -> t.uid == uid) model.todos |> List.head of
+        Nothing ->
+          ( model, Effects.none )
+
+        Just todo ->
+          if todo.editing == False then
+            ( model, Effects.none )
+          else
+            let
+              updateTodo t =
+                if t.uid == uid then
+                  { t | editing = False }
+                else
+                  t
+
+              effect =
+                Http.send
+                  Http.defaultSettings
+                  { verb = "PATCH"
+                  , headers = []
+                  , url = url ++ "/" ++ uid
+                  , body = Http.string <| "{\"title\":\"" ++ newDescription ++ "\"}"
+                  }
+                  |> Http.fromJson todoDecoder
+                  |> Task.toMaybe
+                  |> Task.map HandleUpdatedTodo
+                  |> Effects.task
+            in
+              ( { model | todos = List.map updateTodo model.todos }, effect )
 
     HandleUpdatedTodo maybeTodo ->
       case maybeTodo of
@@ -264,6 +275,21 @@ onEnter address value =
     (\_ -> Signal.message address value)
 
 
+keycodeWithTargetValue : Json.Decode.Decoder ( Int, String )
+keycodeWithTargetValue =
+  Json.Decode.object2
+    (,)
+    keyCode
+    targetValue
+
+
+targetValueOnEnter : Json.Decode.Decoder String
+targetValueOnEnter =
+  Json.Decode.customDecoder
+    keycodeWithTargetValue
+    (\( key, val ) -> is13 key |> Result.map (\_ -> val))
+
+
 is13 : Int -> Result String ()
 is13 code =
   if code == 13 then
@@ -348,7 +374,7 @@ todoItem address todo =
             ]
             []
         , label
-            [ onDoubleClick address (EditingTodo todo.uid True) ]
+            [ onDoubleClick address (BeginEditingTodo todo.uid) ]
             [ text todo.description ]
         , button
             [ class "destroy"
@@ -361,9 +387,11 @@ todoItem address todo =
         , value todo.description
         , name "title"
         , id ("todo-" ++ toString todo.uid)
-        , on "input" targetValue (Signal.message address << UpdateTodo todo.uid)
-        , onBlur address (EditingTodo todo.uid False)
-        , onEnter address (EditingTodo todo.uid False)
+        , on "blur" targetValue (Signal.message address << UpdateTodo todo.uid)
+        , on
+            "keydown"
+            targetValueOnEnter
+            (Signal.message address << UpdateTodo todo.uid)
         ]
         []
     ]
