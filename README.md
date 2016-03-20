@@ -1,4 +1,4 @@
-# TodoMVC in Elm - [Try It!](http://evancz.github.io/elm-todomvc)
+# TodoMVC in Elm - [Try It!](http://robertjlooby.github.io/elm-todomvc)
 
 ## Project Structure
 
@@ -14,7 +14,14 @@ particular text fields when necessary.
 Run the following command from the root of this project:
 
 ```bash
-elm-make Todo.elm
+elm-make Todo.elm --output elm.js
 ```
 
 Then open `index.html` in your browser!
+
+This has been modified from the
+[original version](https://github.com/evancz/elm-todomvc)
+which stored the tasks in local storage to make HTTP requests to any backend
+conforming to the [Todo-Backend](http://www.todobackend.com/index.html)
+spec. Just the `url` needs to updated to change which backend it is pointing
+at.

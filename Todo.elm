@@ -1,4 +1,5 @@
-module Todo where
+module Todo (..) where
+
 {-| TodoMVC implemented in Elm, using plain HTML and CSS for rendering.
 
 This application is broken up into four distinct parts:
@@ -9,248 +10,392 @@ This application is broken up into four distinct parts:
   4. Inputs - the signals necessary to manage events
 
 This clean division of concerns is a core part of Elm. You can read more about
-this in the Pong tutorial: http://elm-lang.org/blog/Pong.elm
+this in the Pong tutorial: http://elm-lang.org/blog/making-pong
 
 This program is not particularly large, so definitely see the following
-document for notes on structuring more complex GUIs with Elm:
-https://gist.github.com/evancz/2b2ba366cae1887fe621
+for notes on structuring more complex GUIs with Elm:
+https://github.com/evancz/elm-architecture-tutorial/
 -}
 
-import Html (..)
-import Html.Attributes (..)
-import Html.Events (..)
-import Html.Lazy (lazy, lazy2)
-import Json.Decode as Json
-import List
-import Maybe
-import Signal
+import Effects exposing (Effects)
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (..)
+import Html.Lazy exposing (lazy, lazy2, lazy3)
+import Http
+import Json.Decode.Extra exposing ((|:))
+import Json.Decode exposing ((:=))
+import Signal exposing (Signal, Address)
+import StartApp
 import String
+import Task exposing (andThen)
 import Window
 
 
 ---- MODEL ----
-
 -- The full application state of our todo app.
+
+
 type alias Model =
-    { tasks      : List Task
-    , field      : String
-    , uid        : Int
-    , visibility : String
-    }
+  { todos : List Todo
+  , field : String
+  , visibility : String
+  , focusedUid : Maybe String
+  }
 
-type alias Task =
-    { description : String
-    , completed   : Bool
-    , editing     : Bool
-    , id          : Int
-    }
 
-newTask : String -> Int -> Task
-newTask desc id =
-    { description = desc
-    , completed = False 
-    , editing = False
-    , id = id
-    }
+type alias Todo =
+  { description : String
+  , completed : Bool
+  , editing : Bool
+  , uid : String
+  }
+
+
+newTodo : String -> String -> Todo
+newTodo desc uid =
+  { description = desc
+  , completed = False
+  , editing = False
+  , uid = uid
+  }
+
 
 emptyModel : Model
 emptyModel =
-    { tasks = []
-    , visibility = "All"
-    , field = ""
-    , uid = 0
-    }
+  { todos = []
+  , visibility = "All"
+  , field = ""
+  , focusedUid = Nothing
+  }
+
 
 
 ---- UPDATE ----
-
 -- A description of the kinds of actions that can be performed on the model of
--- our application. See the following post for more info on this pattern and
--- some alternatives: http://elm-lang.org/learn/Architecture.elm
+-- our application. See the following for more info on this pattern and
+-- some alternatives: https://github.com/evancz/elm-architecture-tutorial/
+
+
 type Action
-    = NoOp
-    | UpdateField String
-    | EditingTask Int Bool
-    | UpdateTask Int String
-    | Add
-    | Delete Int
-    | DeleteComplete
-    | Check Int Bool
-    | CheckAll Bool
-    | ChangeVisibility String
+  = UpdateField String
+  | BeginEditingTodo String
+  | UpdateTodo String String
+  | HandleUpdatedTodo (Maybe Todo)
+  | Add
+  | HandleNew (Maybe Todo)
+  | Delete String
+  | HandleDeleted (Maybe String)
+  | Check String Bool
+  | ChangeVisibility String
+  | InitializeState (Maybe (List Todo))
+
+
 
 -- How we update our Model on a given Action?
-update : Action -> Model -> Model
+
+
+update : Action -> Model -> ( Model, Effects Action )
 update action model =
-    case action of
-      NoOp -> model
+  case action of
+    Add ->
+      let
+        effect =
+          if String.isEmpty model.field then
+            Effects.none
+          else
+            Http.post todoDecoder url (Http.string <| "{\"title\":\"" ++ model.field ++ "\"}")
+              |> Task.toMaybe
+              |> Task.map HandleNew
+              |> Effects.task
+      in
+        ( { model | field = "" }, effect )
 
-      Add ->
-          { model |
-              uid <- model.uid + 1,
-              field <- "",
-              tasks <-
-                  if String.isEmpty model.field
-                    then model.tasks
-                    else model.tasks ++ [newTask model.field model.uid]
-          }
+    HandleNew todo ->
+      case todo of
+        Just t ->
+          ( { model | todos = model.todos ++ [ t ] }, Effects.none )
 
-      UpdateField str ->
-          { model | field <- str }
+        Nothing ->
+          ( model, Effects.none )
 
-      EditingTask id isEditing ->
-          let updateTask t = if t.id == id then { t | editing <- isEditing } else t
+    UpdateField str ->
+      ( { model | field = str }, Effects.none )
+
+    BeginEditingTodo uid ->
+      let
+        updateTodo t =
+          if t.uid == uid then
+            { t | editing = True }
+          else
+            t
+      in
+        ( { model | todos = List.map updateTodo model.todos, focusedUid = Just uid }, Effects.none )
+
+    UpdateTodo uid newDescription ->
+      case List.filter (\t -> t.uid == uid) model.todos |> List.head of
+        Nothing ->
+          ( model, Effects.none )
+
+        Just todo ->
+          if todo.editing == False then
+            ( model, Effects.none )
+          else
+            let
+              updateTodo t =
+                if t.uid == uid then
+                  { t | editing = False }
+                else
+                  t
+
+              effect =
+                Http.send
+                  Http.defaultSettings
+                  { verb = "PATCH"
+                  , headers = []
+                  , url = url ++ "/" ++ uid
+                  , body = Http.string <| "{\"title\":\"" ++ newDescription ++ "\"}"
+                  }
+                  |> Http.fromJson todoDecoder
+                  |> Task.toMaybe
+                  |> Task.map HandleUpdatedTodo
+                  |> Effects.task
+            in
+              ( { model | todos = List.map updateTodo model.todos }, effect )
+
+    HandleUpdatedTodo maybeTodo ->
+      case maybeTodo of
+        Just todo ->
+          let
+            updateTodo t =
+              if t.uid == todo.uid then
+                todo
+              else
+                t
           in
-              { model | tasks <- List.map updateTask model.tasks }
+            ( { model | todos = List.map updateTodo model.todos }, Effects.none )
 
-      UpdateTask id task ->
-          let updateTask t = if t.id == id then { t | description <- task } else t
-          in
-              { model | tasks <- List.map updateTask model.tasks }
+        Nothing ->
+          ( model, Effects.none )
 
-      Delete id ->
-          { model | tasks <- List.filter (\t -> t.id /= id) model.tasks }
+    Delete uid ->
+      let
+        handleResponse response =
+          case response.status of
+            204 ->
+              Task.succeed uid
 
-      DeleteComplete ->
-          { model | tasks <- List.filter (not << .completed) model.tasks }
+            _ ->
+              Task.fail Http.RawNetworkError
 
-      Check id isCompleted ->
-          let updateTask t = if t.id == id then { t | completed <- isCompleted } else t
-          in
-              { model | tasks <- List.map updateTask model.tasks }
+        effect =
+          Http.send
+            Http.defaultSettings
+            { verb = "DELETE"
+            , headers = []
+            , url = url ++ "/" ++ uid
+            , body = Http.empty
+            }
+            `andThen` handleResponse
+            |> Task.toMaybe
+            |> Task.map HandleDeleted
+            |> Effects.task
+      in
+        ( model, effect )
 
-      CheckAll isCompleted ->
-          let updateTask t = { t | completed <- isCompleted }
-          in
-              { model | tasks <- List.map updateTask model.tasks }
+    HandleDeleted maybeUid ->
+      case maybeUid of
+        Just uid ->
+          ( { model | todos = List.filter (\t -> t.uid /= uid) model.todos }, Effects.none )
 
-      ChangeVisibility visibility ->
-          { model | visibility <- visibility }
+        Nothing ->
+          ( model, Effects.none )
+
+    Check uid isCompleted ->
+      let
+        effect =
+          Http.send
+            Http.defaultSettings
+            { verb = "PATCH"
+            , headers = []
+            , url = url ++ "/" ++ uid
+            , body = Http.string <| "{\"completed\":" ++ (toString >> String.toLower) isCompleted ++ "}"
+            }
+            |> Http.fromJson todoDecoder
+            |> Task.toMaybe
+            |> Task.map HandleUpdatedTodo
+            |> Effects.task
+      in
+        ( model, effect )
+
+    ChangeVisibility visibility ->
+      ( { model | visibility = visibility }, Effects.none )
+
+    InitializeState todos ->
+      ( { model | todos = Maybe.withDefault [] todos }, Effects.none )
+
 
 
 ---- VIEW ----
 
-view : Model -> Html
-view model =
-    div
-      [ class "todomvc-wrapper"
-      , style [ ("visibility", "hidden") ]
-      ]
-      [ section
-          [ id "todoapp" ]
-          [ lazy taskEntry model.field
-          , lazy2 taskList model.visibility model.tasks
-          , lazy2 controls model.visibility model.tasks
-          ]
-      , infoFooter
-      ]
 
-onEnter : Signal.Message -> Attribute
-onEnter message =
-    on "keydown"
-      (Json.customDecoder keyCode is13)
-      (always message)
+view : Address Action -> Model -> Html
+view address model =
+  div
+    [ class "todomvc-wrapper"
+    , style [ ( "visibility", "hidden" ) ]
+    ]
+    [ section
+        [ id "todoapp" ]
+        [ lazy2 taskEntry address model.field
+        , lazy3 taskList address model.visibility model.todos
+        , lazy3 controls address model.visibility model.todos
+        ]
+    , infoFooter
+    ]
+
+
+onEnter : Address a -> a -> Attribute
+onEnter address value =
+  on
+    "keydown"
+    (Json.Decode.customDecoder keyCode is13)
+    (\_ -> Signal.message address value)
+
+
+keycodeWithTargetValue : Json.Decode.Decoder ( Int, String )
+keycodeWithTargetValue =
+  Json.Decode.object2
+    (,)
+    keyCode
+    targetValue
+
+
+targetValueOnEnter : Json.Decode.Decoder String
+targetValueOnEnter =
+  Json.Decode.customDecoder
+    keycodeWithTargetValue
+    (\( key, val ) -> is13 key |> Result.map (\_ -> val))
+
 
 is13 : Int -> Result String ()
 is13 code =
-  if code == 13 then Ok () else Err "not the right key code"
+  if code == 13 then
+    Ok ()
+  else
+    Err "not the right key code"
 
-taskEntry : String -> Html
-taskEntry task =
-    header 
-      [ id "header" ]
-      [ h1 [] [ text "todos" ]
-      , input
-          [ id "new-todo"
-          , placeholder "What needs to be done?"
-          , autofocus True
-          , value task
-          , name "newTodo"
-          , on "input" targetValue (Signal.send updates << UpdateField)
-          , onEnter (Signal.send updates Add)
-          ]
-          []
-      ]
 
-taskList : String -> List Task -> Html
-taskList visibility tasks =
-    let isVisible todo =
-            case visibility of
-              "Completed" -> todo.completed
-              "Active" -> not todo.completed
-              "All" -> True
+taskEntry : Address Action -> String -> Html
+taskEntry address task =
+  header
+    [ id "header" ]
+    [ h1 [] [ text "todos" ]
+    , input
+        [ id "new-todo"
+        , placeholder "What needs to be done?"
+        , autofocus True
+        , value task
+        , name "newTodo"
+        , on "input" targetValue (Signal.message address << UpdateField)
+        , onEnter address Add
+        ]
+        []
+    ]
 
-        allCompleted = List.all .completed tasks
 
-        cssVisibility = if List.isEmpty tasks then "hidden" else "visible"
-    in
+taskList : Address Action -> String -> List Todo -> Html
+taskList address visibility todos =
+  let
+    isVisible todo =
+      case visibility of
+        "Completed" ->
+          todo.completed
+
+        "Active" ->
+          not todo.completed
+
+        _ ->
+          True
+
+    allCompleted =
+      List.all .completed todos
+
+    cssVisibility =
+      if List.isEmpty todos then
+        "hidden"
+      else
+        "visible"
+  in
     section
       [ id "main"
-      , style [ ("visibility", cssVisibility) ]
+      , style [ ( "visibility", cssVisibility ) ]
       ]
-      [ input
-          [ id "toggle-all"
-          , type' "checkbox"
-          , name "toggle"
-          , checked allCompleted
-          , onClick (Signal.send updates (CheckAll (not allCompleted)))
-          ]
-          []
-      , label
-          [ for "toggle-all" ]
-          [ text "Mark all as complete" ]
-      , ul
+      [ ul
           [ id "todo-list" ]
-          (List.map todoItem (List.filter isVisible tasks))
+          (List.map (todoItem address) (List.filter isVisible todos))
       ]
 
-todoItem : Task -> Html
-todoItem todo =
-    let className = (if todo.completed then "completed " else "") ++
-                    (if todo.editing   then "editing"    else "")
-    in
 
-    li
-      [ class className ]
-      [ div
-          [ class "view" ]
-          [ input
-              [ class "toggle"
-              , type' "checkbox"
-              , checked todo.completed
-              , onClick (Signal.send updates (Check todo.id (not todo.completed)))
-              ]
-              []
-          , label
-              [ onDoubleClick (Signal.send updates (EditingTask todo.id True)) ]
-              [ text todo.description ]
-          , button
-              [ class "destroy"
-              , onClick (Signal.send updates (Delete todo.id))
-              ]
-              []
-          ]
-      , input
-          [ class "edit"
-          , value todo.description
-          , name "title"
-          , id ("todo-" ++ toString todo.id)
-          , on "input" targetValue (Signal.send updates << UpdateTask todo.id)
-          , onBlur (Signal.send updates (EditingTask todo.id False))
-          , onEnter (Signal.send updates (EditingTask todo.id False))
-          ]
-          []
-      ]
+todoItem : Address Action -> Todo -> Html
+todoItem address todo =
+  li
+    [ classList [ ( "completed", todo.completed ), ( "editing", todo.editing ) ] ]
+    [ div
+        [ class "view" ]
+        [ input
+            [ class "toggle"
+            , type' "checkbox"
+            , checked todo.completed
+            , onWithOptions
+                "click"
+                { stopPropagation = True, preventDefault = True }
+                Json.Decode.value
+                (\_ -> Signal.message address (Check todo.uid (not todo.completed)))
+            ]
+            []
+        , label
+            [ onDoubleClick address (BeginEditingTodo todo.uid) ]
+            [ text todo.description ]
+        , button
+            [ class "destroy"
+            , onClick address (Delete todo.uid)
+            ]
+            []
+        ]
+    , input
+        [ class "edit"
+        , value todo.description
+        , name "title"
+        , id ("todo-" ++ todo.uid)
+        , on "blur" targetValue (Signal.message address << UpdateTodo todo.uid)
+        , on
+            "keydown"
+            targetValueOnEnter
+            (Signal.message address << UpdateTodo todo.uid)
+        ]
+        []
+    ]
 
-controls : String -> List Task -> Html
-controls visibility tasks =
-    let tasksCompleted = List.length (List.filter .completed tasks)
-        tasksLeft = List.length tasks - tasksCompleted
-        item_ = if tasksLeft == 1 then " item" else " items"
-    in
+
+controls : Address Action -> String -> List Todo -> Html
+controls address visibility todos =
+  let
+    tasksCompleted =
+      List.length (List.filter .completed todos)
+
+    tasksLeft =
+      List.length todos - tasksCompleted
+
+    item_ =
+      if tasksLeft == 1 then
+        " item"
+      else
+        " items"
+  in
     footer
       [ id "footer"
-      , hidden (List.isEmpty tasks)
+      , hidden (List.isEmpty todos)
       ]
       [ span
           [ id "todo-count" ]
@@ -259,75 +404,89 @@ controls visibility tasks =
           ]
       , ul
           [ id "filters" ]
-          [ visibilitySwap "#/" "All" visibility
+          [ visibilitySwap address "#/" "All" visibility
           , text " "
-          , visibilitySwap "#/active" "Active" visibility
+          , visibilitySwap address "#/active" "Active" visibility
           , text " "
-          , visibilitySwap "#/completed" "Completed" visibility
+          , visibilitySwap address "#/completed" "Completed" visibility
           ]
-      , button
-          [ class "clear-completed"
-          , id "clear-completed"
-          , hidden (tasksCompleted == 0)
-          , onClick (Signal.send updates DeleteComplete)
-          ]
-          [ text ("Clear completed (" ++ toString tasksCompleted ++ ")") ]
       ]
 
-visibilitySwap : String -> String -> String -> Html
-visibilitySwap uri visibility actualVisibility =
-    let className = if visibility == actualVisibility then "selected" else "" in
-    li
-      [ onClick (Signal.send updates (ChangeVisibility visibility)) ]
-      [ a [ class className, href uri ] [ text visibility ] ]
+
+visibilitySwap : Address Action -> String -> String -> String -> Html
+visibilitySwap address uri visibility actualVisibility =
+  li
+    [ onClick address (ChangeVisibility visibility) ]
+    [ a [ href uri, classList [ ( "selected", visibility == actualVisibility ) ] ] [ text visibility ] ]
+
 
 infoFooter : Html
 infoFooter =
-    footer [ id "info" ]
-      [ p [] [ text "Double-click to edit a todo" ]
-      , p [] [ text "Written by "
-             , a [ href "https://github.com/evancz" ] [ text "Evan Czaplicki" ]
-             ]
-      , p [] [ text "Part of "
-             , a [ href "http://todomvc.com" ] [ text "TodoMVC" ]
-             ]
-      ]
+  footer
+    [ id "info" ]
+    [ p [] [ text "Double-click to edit a todo" ]
+    , p
+        []
+        [ a [ href "https://github.com/robertjlooby/elm-todomvc" ] [ text "Source" ]
+        ]
+    ]
+
 
 
 ---- INPUTS ----
-
 -- wire the entire application together
+
+
+app =
+  StartApp.start
+    { init = ( emptyModel, loadInitialState )
+    , view = view
+    , update = update
+    , inputs = []
+    }
+
+
 main : Signal Html
-main = Signal.map view model
+main =
+  app.html
 
--- manage the model of our application over time
-model : Signal Model
-model = Signal.foldp update initialModel (Signal.subscribe updates)
 
-initialModel : Model
-initialModel =
-  Maybe.withDefault emptyModel getStorage
+port tasks : Signal (Task.Task Effects.Never ())
+port tasks =
+  app.tasks
 
--- updates from user input
-updates : Signal.Channel Action
-updates = Signal.channel NoOp
 
 port focus : Signal String
 port focus =
-    let needsFocus act =
-            case act of
-              EditingTask id bool -> bool
-              _ -> False
-
-        toSelector (EditingTask id _) = ("#todo-" ++ toString id)
-    in
-        Signal.subscribe updates
-          |> Signal.keepIf needsFocus (EditingTask 0 True)
-          |> Signal.map toSelector
+  let
+    toSelector uid =
+      "#todo-" ++ uid
+  in
+    Signal.map (.focusedUid >> Maybe.withDefault "" >> toSelector) app.model
 
 
--- interactions with localStorage to save the model
-port getStorage : Maybe Model
+url : String
+url =
+  "http://serviceworker-todo.herokuapp.com/todos"
 
-port setStorage : Signal Model
-port setStorage = model
+
+loadInitialState : Effects Action
+loadInitialState =
+  Http.get todosDecoder url
+    |> Task.toMaybe
+    |> Task.map InitializeState
+    |> Effects.task
+
+
+todoDecoder : Json.Decode.Decoder Todo
+todoDecoder =
+  Json.Decode.succeed Todo
+    |: ("title" := Json.Decode.string)
+    |: ("completed" := Json.Decode.bool)
+    |: Json.Decode.succeed False
+    |: ("uid" := Json.Decode.string)
+
+
+todosDecoder : Json.Decode.Decoder (List Todo)
+todosDecoder =
+  Json.Decode.list todoDecoder
