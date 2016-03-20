@@ -85,9 +85,7 @@ type Action
   | HandleNew (Maybe Todo)
   | Delete String
   | HandleDeleted (Maybe String)
-  | DeleteComplete
   | Check String Bool
-  | CheckAll Bool
   | ChangeVisibility String
   | InitializeState (List Todo)
 
@@ -220,9 +218,6 @@ update action model =
         Nothing ->
           ( model, Effects.none )
 
-    DeleteComplete ->
-      ( { model | todos = List.filter (not << .completed) model.todos }, Effects.none )
-
     Check uid isCompleted ->
       let
         updateTodo t =
@@ -230,13 +225,6 @@ update action model =
             { t | completed = isCompleted }
           else
             t
-      in
-        ( { model | todos = List.map updateTodo model.todos }, Effects.none )
-
-    CheckAll isCompleted ->
-      let
-        updateTodo t =
-          { t | completed = isCompleted }
       in
         ( { model | todos = List.map updateTodo model.todos }, Effects.none )
 
@@ -343,18 +331,7 @@ taskList address visibility todos =
       [ id "main"
       , style [ ( "visibility", cssVisibility ) ]
       ]
-      [ input
-          [ id "toggle-all"
-          , type' "checkbox"
-          , name "toggle"
-          , checked allCompleted
-          , onClick address (CheckAll (not allCompleted))
-          ]
-          []
-      , label
-          [ for "toggle-all" ]
-          [ text "Mark all as complete" ]
-      , ul
+      [ ul
           [ id "todo-list" ]
           (List.map (todoItem address) (List.filter isVisible todos))
       ]
@@ -429,13 +406,6 @@ controls address visibility todos =
           , text " "
           , visibilitySwap address "#/completed" "Completed" visibility
           ]
-      , button
-          [ class "clear-completed"
-          , id "clear-completed"
-          , hidden (tasksCompleted == 0)
-          , onClick address DeleteComplete
-          ]
-          [ text ("Clear completed (" ++ toString tasksCompleted ++ ")") ]
       ]
 
 
