@@ -81,7 +81,7 @@ type Action
   | EditingTodo String Bool
   | UpdateTodo String String
   | Add
-  | NewTodo (Maybe Todo)
+  | HandleNew (Maybe Todo)
   | Delete String
   | DeleteComplete
   | Check String Bool
@@ -108,12 +108,12 @@ update action model =
           else
             Http.post todoDecoder url (Http.string <| "{\"title\":\"" ++ model.field ++ "\"}")
               |> Task.toMaybe
-              |> Task.map NewTodo
+              |> Task.map HandleNew
               |> Effects.task
       in
         ( { model | field = "" }, effect )
 
-    NewTodo todo ->
+    HandleNew todo ->
       case todo of
         Just t ->
           ( { model | todos = model.todos ++ [ t ] }, Effects.none )
