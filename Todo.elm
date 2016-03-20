@@ -40,6 +40,7 @@ type alias Model =
   { todos : List Todo
   , field : String
   , visibility : String
+  , focusedUid : Maybe String
   }
 
 
@@ -65,6 +66,7 @@ emptyModel =
   { todos = []
   , visibility = "All"
   , field = ""
+  , focusedUid = Nothing
   }
 
 
@@ -131,13 +133,8 @@ update action model =
             { t | editing = True }
           else
             t
-
-        effect =
-          Signal.send focusIdMailbox.address uid
-            |> Task.map (always NoOp)
-            |> Effects.task
       in
-        ( { model | todos = List.map updateTodo model.todos }, effect )
+        ( { model | todos = List.map updateTodo model.todos, focusedUid = Just uid }, Effects.none )
 
     UpdateTodo uid newDescription ->
       case List.filter (\t -> t.uid == uid) model.todos |> List.head of
@@ -468,19 +465,13 @@ actions =
   Signal.mailbox NoOp
 
 
-focusIdMailbox : Signal.Mailbox String
-focusIdMailbox =
-  Signal.mailbox ""
-
-
 port focus : Signal String
 port focus =
   let
     toSelector uid =
       "#todo-" ++ uid
   in
-    focusIdMailbox.signal
-      |> Signal.map toSelector
+    Signal.map (.focusedUid >> Maybe.withDefault "" >> toSelector) app.model
 
 
 url : String
