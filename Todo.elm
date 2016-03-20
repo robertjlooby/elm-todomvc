@@ -78,8 +78,7 @@ emptyModel =
 
 
 type Action
-  = NoOp
-  | UpdateField String
+  = UpdateField String
   | BeginEditingTodo String
   | UpdateTodo String String
   | HandleUpdatedTodo (Maybe Todo)
@@ -89,7 +88,7 @@ type Action
   | HandleDeleted (Maybe String)
   | Check String Bool
   | ChangeVisibility String
-  | InitializeState (List Todo)
+  | InitializeState (Maybe (List Todo))
 
 
 
@@ -99,9 +98,6 @@ type Action
 update : Action -> Model -> ( Model, Effects Action )
 update action model =
   case action of
-    NoOp ->
-      ( model, Effects.none )
-
     Add ->
       let
         effect =
@@ -236,7 +232,7 @@ update action model =
       ( { model | visibility = visibility }, Effects.none )
 
     InitializeState todos ->
-      ( { model | todos = todos }, Effects.none )
+      ( { model | todos = Maybe.withDefault [] todos }, Effects.none )
 
 
 
@@ -443,10 +439,10 @@ infoFooter =
 
 app =
   StartApp.start
-    { init = ( emptyModel, Effects.none )
+    { init = ( emptyModel, loadInitialState )
     , view = view
     , update = update
-    , inputs = [ actions.signal ]
+    , inputs = []
     }
 
 
@@ -458,11 +454,6 @@ main =
 port tasks : Signal (Task.Task Effects.Never ())
 port tasks =
   app.tasks
-
-
-actions : Signal.Mailbox Action
-actions =
-  Signal.mailbox NoOp
 
 
 port focus : Signal String
@@ -479,10 +470,12 @@ url =
   "http://serviceworker-todo.herokuapp.com/todos"
 
 
-port loadInitialState : Task.Task Http.Error ()
-port loadInitialState =
+loadInitialState : Effects Action
+loadInitialState =
   Http.get todosDecoder url
-    `andThen` (\todos -> Signal.send actions.address <| InitializeState todos)
+    |> Task.toMaybe
+    |> Task.map InitializeState
+    |> Effects.task
 
 
 todoDecoder : Json.Decode.Decoder Todo
