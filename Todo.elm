@@ -83,6 +83,7 @@ type Action
   | Add
   | HandleNew (Maybe Todo)
   | Delete String
+  | HandleDeleted (Maybe String)
   | DeleteComplete
   | Check String Bool
   | CheckAll Bool
@@ -153,7 +154,37 @@ update action model =
         ( { model | todos = List.map updateTodo model.todos }, Effects.none )
 
     Delete uid ->
-      ( { model | todos = List.filter (\t -> t.uid /= uid) model.todos }, Effects.none )
+      let
+        handleResponse response =
+          case response.status of
+            204 ->
+              Task.succeed uid
+
+            _ ->
+              Task.fail Http.RawNetworkError
+
+        effect =
+          Http.send
+            Http.defaultSettings
+            { verb = "DELETE"
+            , headers = []
+            , url = url ++ "/" ++ uid
+            , body = Http.empty
+            }
+            `andThen` handleResponse
+            |> Task.toMaybe
+            |> Task.map HandleDeleted
+            |> Effects.task
+      in
+        ( model, effect )
+
+    HandleDeleted maybeUid ->
+      case maybeUid of
+        Just uid ->
+          ( { model | todos = List.filter (\t -> t.uid /= uid) model.todos }, Effects.none )
+
+        Nothing ->
+          ( model, Effects.none )
 
     DeleteComplete ->
       ( { model | todos = List.filter (not << .completed) model.todos }, Effects.none )
